@@ -13,6 +13,7 @@ fi
 
 cd /var/www/backend
 mkdir -p storage/app/private storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
+chmod -R 0777 storage bootstrap/cache
 
 LISTEN_PORT="${PORT:-7860}"
 GW_PREFIX="${GW_SECRET:-_gw_local}"
@@ -24,6 +25,8 @@ error_log = /dev/stderr
 daemonize = no
 
 [www]
+user = www-data
+group = www-data
 listen = 127.0.0.1:9000
 pm = dynamic
 pm.max_children = 6
