@@ -8,18 +8,19 @@ if [[ ! -f /var/www/backend/artisan ]]; then
     openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 -in /opt/bundle.enc -pass env:BUNDLE_KEY | tar -xz -C /var/www/backend
     ln -sfn /opt/vendor /var/www/backend/vendor
     cd /var/www/backend
+    rm -f bootstrap/cache/*.php
     composer dump-autoload --no-dev --optimize --no-interaction --no-scripts
 fi
 
 cd /var/www/backend
 rm -f bootstrap/cache/*.php
-mkdir -p storage/app/private storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
+mkdir -p storage/app/private storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache public_spa
 chmod -R 0777 storage bootstrap/cache
 
 LISTEN_PORT="${PORT:-7860}"
 GW_PREFIX="${GW_SECRET:-_gw_local}"
 
-cat > /tmp/run/php-fpm.conf <<'EOF'
+cat > /tmp/run/php-fpm.conf <<'FPM_EOF'
 [global]
 pid = /tmp/run/php-fpm.pid
 error_log = /dev/stderr
@@ -39,9 +40,9 @@ clear_env = no
 catch_workers_output = yes
 decorate_workers_output = no
 php_admin_value[disable_functions] = exec,shell_exec,system,passthru,popen
-EOF
+FPM_EOF
 
-cat > /tmp/run/nginx.conf <<EOF
+cat > /tmp/run/nginx.conf <<NGX_EOF
 worker_processes auto;
 pid /tmp/run/nginx.pid;
 error_log /dev/stderr warn;
@@ -62,6 +63,8 @@ http {
     scgi_temp_path        /tmp/run/nginx_scgi;
 
     sendfile on;
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml text/javascript;
     keepalive_timeout 65;
     client_max_body_size 55m;
     server_tokens off;
@@ -69,53 +72,77 @@ http {
     server {
         listen ${LISTEN_PORT};
         server_name _;
-        root /var/www/backend/public;
-        index index.php;
+        root /var/www/backend/public_spa;
+        index index.html;
 
         add_header X-Content-Type-Options "nosniff" always;
         add_header X-Frame-Options "DENY" always;
         add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-
-        location = / {
-            default_type application/json;
-            return 200 '{"status":"ok"}';
-        }
 
         location = /up {
             default_type application/json;
             return 200 '{"status":"up"}';
         }
 
-        location / {
-            set \$gw_ok 0;
+        location ^~ /${GW_PREFIX}/ {
             set \$clean_request_uri \$request_uri;
             if (\$request_uri ~ "^/${GW_PREFIX}(/.*)\$") {
-                set \$gw_ok 1;
                 set \$clean_request_uri \$1;
             }
-            if (\$gw_ok = 0) {
-                return 404;
-            }
-
             set \$eff_referer \$http_referer;
             if (\$eff_referer = "") {
                 set \$eff_referer "https://licitaciones-beta.vercel.app/";
             }
-
             fastcgi_pass 127.0.0.1:9000;
             fastcgi_index index.php;
             include /etc/nginx/fastcgi_params;
-            fastcgi_param SCRIPT_FILENAME \$realpath_root/index.php;
+            fastcgi_param SCRIPT_FILENAME /var/www/backend/public/index.php;
             fastcgi_param SCRIPT_NAME /index.php;
-            fastcgi_param DOCUMENT_ROOT \$realpath_root;
+            fastcgi_param DOCUMENT_ROOT /var/www/backend/public;
             fastcgi_param REQUEST_URI \$clean_request_uri;
             fastcgi_param HTTP_REFERER \$eff_referer;
             fastcgi_param HTTPS on;
             fastcgi_read_timeout 180s;
         }
+
+        location ^~ /api/ {
+            set \$eff_referer \$http_referer;
+            if (\$eff_referer = "") {
+                set \$eff_referer "https://licitaciones-api-wpyo.onrender.com/";
+            }
+            fastcgi_pass 127.0.0.1:9000;
+            fastcgi_index index.php;
+            include /etc/nginx/fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME /var/www/backend/public/index.php;
+            fastcgi_param SCRIPT_NAME /index.php;
+            fastcgi_param DOCUMENT_ROOT /var/www/backend/public;
+            fastcgi_param HTTP_REFERER \$eff_referer;
+            fastcgi_param HTTPS on;
+            fastcgi_read_timeout 180s;
+        }
+
+        location ^~ /sanctum/ {
+            set \$eff_referer \$http_referer;
+            if (\$eff_referer = "") {
+                set \$eff_referer "https://licitaciones-api-wpyo.onrender.com/";
+            }
+            fastcgi_pass 127.0.0.1:9000;
+            fastcgi_index index.php;
+            include /etc/nginx/fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME /var/www/backend/public/index.php;
+            fastcgi_param SCRIPT_NAME /index.php;
+            fastcgi_param DOCUMENT_ROOT /var/www/backend/public;
+            fastcgi_param HTTP_REFERER \$eff_referer;
+            fastcgi_param HTTPS on;
+            fastcgi_read_timeout 180s;
+        }
+
+        location / {
+            try_files \$uri \$uri/ /index.html;
+        }
     }
 }
-EOF
+NGX_EOF
 
 echo "[gw-start] Iniciando Redis local..."
 redis-server --daemonize yes --bind 127.0.0.1 --port 6379 --dir /tmp/run --pidfile /tmp/run/redis.pid --maxmemory 64mb --maxmemory-policy allkeys-lru --save "" --appendonly no
