@@ -12,6 +12,7 @@ if [[ ! -f /var/www/backend/artisan ]]; then
 fi
 
 cd /var/www/backend
+rm -f bootstrap/cache/*.php
 mkdir -p storage/app/private storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
 chmod -R 0777 storage bootstrap/cache
 
